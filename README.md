@@ -28,9 +28,9 @@
 4. 点击「**加载已解压的扩展程序**」
 5. 选择本项目的根目录
 
-### 方式二：从 Chrome 应用商店安装（待上架）
+### 方式二：从 Chrome 应用商店安装
 
-> 暂无，欢迎帮忙提 PR 发布到应用商店 🙏
+[应用商店](https://chromewebstore.google.com/detail/read-line/hnijpkiijmkiimdfdkciklmbcbokhpia)
 
 ---
 
@@ -50,11 +50,20 @@
 
 ### 键盘快捷键
 
-| 快捷键 | 功能 |
-|--------|------|
-| `Ctrl + Shift + L` | 切换当前标签页的阅读线显示/隐藏 |
+| 快捷键（Windows / Linux） | 快捷键（macOS） | 功能 |
+|--------|--------|------|
+| `Ctrl + Shift + L` | `⌘ + Shift + L` | 切换当前标签页的阅读线显示/隐藏 |
 
-> 可在 `chrome://extensions/shortcuts` 中自定义快捷键。
+**说明：**
+- 快捷键在**网页有焦点时**即可生效，无需打开设置弹窗
+- 在黑名单内的网站，快捷键无效（需先将该网站移出黑名单）
+- 可在 `chrome://extensions/shortcuts` 中自定义或修改快捷键
+
+**如何自定义快捷键：**
+1. 在 Chrome 地址栏输入 `chrome://extensions/shortcuts` 并回车
+2. 找到「Read-Line」扩展
+3. 点击「设置快捷键」，按下你想要的组合键
+4. 设置即时生效，无需重新加载扩展
 
 ---
 

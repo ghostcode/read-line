@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Read-Line",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "在网页上显示一条跟随鼠标移动的阅读辅助线，帮助锁定当前阅读行。",
   "permissions": [
     "storage"
