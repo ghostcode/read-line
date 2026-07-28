@@ -14,14 +14,20 @@ const thicknessVal = document.getElementById("thicknessVal");
 const currentSiteEl = document.getElementById("currentSite");
 const blToggleBtn = document.getElementById("blToggleBtn");
 const blListEl = document.getElementById("blList");
+const modeBlacklistBtn = document.getElementById("modeBlacklist");
+const modeWhitelistBtn = document.getElementById("modeWhitelist");
+const modeDescEl = document.getElementById("modeDesc");
+const listTitleEl = document.getElementById("listTitle");
 
 let currentSettings = {
   enabled: true,
   color: "#44bd32",
   thickness: 2,
   lineType: "solid",
+  mode: "blacklist",
 };
 let blacklist = [];
+let whitelist = [];
 let currentHostname = "";
 
 // ========== 获取当前标签页 ==========
@@ -31,20 +37,26 @@ function getActiveTab(callback) {
   });
 }
 
-// ========== 从 content script 获取当前 hostname ==========
+// ========== 提取 hostname ==========
+function getHostname(url) {
+  try { return new URL(url).hostname; } catch { return ""; }
+}
+
+// ========== 从 activeTab 获取当前 hostname（优先），失败时回退到 content script ==========
 function getCurrentHostname(callback) {
   getActiveTab((tab) => {
-    if (!tab?.id) {
-      callback("");
-      return;
-    }
-    // 向 content script 请求 hostname（不需要 tabs 权限）
+    if (!tab?.id) { callback(""); return; }
+
+    // 优先：activeTab 权限下 tab.url 可用
+    const host = getHostname(tab?.url || tab?.pendingUrl || "");
+    if (host) { callback(host); return; }
+
+    // 回退：向 content script 发消息
     chrome.tabs.sendMessage(
       tab.id,
       { type: "getHostname" },
       (response) => {
         if (chrome.runtime.lastError || !response || !response.hostname) {
-          // content script 未注入该页面（如 chrome://），无法识别
           callback("");
         } else {
           callback(response.hostname);
@@ -72,32 +84,44 @@ function saveAndNotify() {
   notifyContentScript();
 }
 
-// ========== 加载黑名单 ==========
-function loadBlacklist(callback) {
-  chrome.storage.sync.get({ blacklist: [] }, (items) => {
+// ========== 加载名单 ==========
+function loadLists(callback) {
+  chrome.storage.sync.get({ blacklist: [], whitelist: [] }, (items) => {
     blacklist = items.blacklist;
+    whitelist = items.whitelist;
     if (callback) callback();
   });
 }
 
-// ========== 保存黑名单 ==========
-function saveBlacklist() {
-  chrome.storage.sync.set({ blacklist });
+// ========== 保存名单 ==========
+function saveList(type) {
+  chrome.storage.sync.set({
+    [type]: type === "blacklist" ? blacklist : whitelist,
+  });
 }
 
-// ========== 检查当前网站是否在黑名单 ==========
-function isCurrentSiteBlacklisted() {
-  return blacklist.includes(currentHostname);
+// ========== 获取当前模式对应的名单 ==========
+function currentList() {
+  return currentSettings.mode === "blacklist" ? blacklist : whitelist;
 }
 
-// ========== 渲染黑名单列表 ==========
-function renderBlacklist() {
+// ========== 检查当前网站是否在当前模式的名单中 ==========
+function isCurrentSiteInList() {
+  return currentList().includes(currentHostname);
+}
+
+// ========== 渲染名单列表 ==========
+function renderList() {
+  const list = currentList();
   blListEl.innerHTML = "";
-  if (blacklist.length === 0) {
-    blListEl.innerHTML = '<div class="bl-empty">暂无隐藏辅助线的网站</div>';
+  if (list.length === 0) {
+    const emptyText = currentSettings.mode === "blacklist"
+      ? "暂无黑名单网站（所有网站默认显示阅读线）"
+      : "暂无白名单网站（所有网站默认不显示阅读线）";
+    blListEl.innerHTML = `<div class="bl-empty">${emptyText}</div>`;
     return;
   }
-  blacklist.forEach((host) => {
+  list.forEach((host) => {
     const item = document.createElement("div");
     item.className = "bl-item";
     item.innerHTML = `<span>${host}</span><button class="bl-remove" data-host="${host}">×</button>`;
@@ -109,17 +133,20 @@ function renderBlacklist() {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const host = btn.dataset.host;
-      blacklist = blacklist.filter((h) => h !== host);
-      saveBlacklist();
-      renderBlacklist();
-      updateBlToggleBtn();
-      // storage 监听会自动通知各标签页，无需单独发消息
+      if (currentSettings.mode === "blacklist") {
+        blacklist = blacklist.filter((h) => h !== host);
+      } else {
+        whitelist = whitelist.filter((h) => h !== host);
+      }
+      saveList(currentSettings.mode);
+      renderList();
+      updateListToggleBtn();
     });
   });
 }
 
-// ========== 更新隐藏/显示按钮文案和样式 ==========
-function updateBlToggleBtn() {
+// ========== 更新名单按钮文案和样式 ==========
+function updateListToggleBtn() {
   if (!currentHostname) {
     blToggleBtn.textContent = "当前页面不支持";
     blToggleBtn.disabled = true;
@@ -127,19 +154,56 @@ function updateBlToggleBtn() {
     return;
   }
   blToggleBtn.disabled = false;
-  if (isCurrentSiteBlacklisted()) {
-    blToggleBtn.textContent = "在此网站显示辅助线";
-    blToggleBtn.classList.add("is-on");
+  if (currentSettings.mode === "blacklist") {
+    if (isCurrentSiteInList()) {
+      blToggleBtn.textContent = `移出黑名单（${currentHostname}）`;
+      blToggleBtn.classList.add("is-on");
+    } else {
+      blToggleBtn.textContent = `添加到黑名单（${currentHostname}）`;
+      blToggleBtn.classList.remove("is-on");
+    }
   } else {
-    blToggleBtn.textContent = "在此网站隐藏辅助线";
-    blToggleBtn.classList.remove("is-on");
+    // whitelist 模式
+    if (isCurrentSiteInList()) {
+      blToggleBtn.textContent = `移出白名单（${currentHostname}）`;
+      blToggleBtn.classList.add("is-on");
+    } else {
+      blToggleBtn.textContent = `添加到白名单（${currentHostname}）`;
+      blToggleBtn.classList.remove("is-on");
+    }
   }
+}
+
+// ========== 更新名单区域标题 ==========
+function updateListSectionTitle() {
+  listTitleEl.textContent = currentSettings.mode === "blacklist"
+    ? "不显示辅助线的网站"
+    : "显示辅助线的网站";
+}
+
+// ========== 更新模式描述 ==========
+function updateModeDesc() {
+  modeDescEl.textContent = currentSettings.mode === "blacklist"
+    ? "默认所有网站显示阅读线，名单内的不显示"
+    : "默认所有网站不显示阅读线，名单内的才显示";
+}
+
+// ========== 渲染模式按钮高亮 ==========
+function renderModeButtons() {
+  modeBlacklistBtn.classList.toggle("active", currentSettings.mode === "blacklist");
+  modeWhitelistBtn.classList.toggle("active", currentSettings.mode === "whitelist");
 }
 
 // ========== 加载设置并渲染 UI ==========
 function loadSettings() {
   chrome.storage.sync.get(
-    { enabled: true, color: "#44bd32", thickness: 2, lineType: "solid" },
+    {
+      enabled: true,
+      color: "#44bd32",
+      thickness: 2,
+      lineType: "solid",
+      mode: "blacklist",
+    },
     (items) => {
       currentSettings = items;
       toggleEl.checked = currentSettings.enabled;
@@ -147,6 +211,9 @@ function loadSettings() {
       thicknessVal.textContent = currentSettings.thickness;
       renderColors();
       renderLineTypes();
+      renderModeButtons();
+      updateModeDesc();
+      updateListSectionTitle();
     }
   );
 }
@@ -199,22 +266,53 @@ thicknessEl.addEventListener("input", () => {
   saveAndNotify();
 });
 
-// ========== 黑名单按钮事件 ==========
+// ========== 模式切换事件 ==========
+modeBlacklistBtn.addEventListener("click", () => {
+  if (currentSettings.mode === "blacklist") return;
+  currentSettings.mode = "blacklist";
+  saveAndNotify();
+  renderModeButtons();
+  updateModeDesc();
+  updateListSectionTitle();
+  renderList();
+  updateListToggleBtn();
+});
+
+modeWhitelistBtn.addEventListener("click", () => {
+  if (currentSettings.mode === "whitelist") return;
+  currentSettings.mode = "whitelist";
+  saveAndNotify();
+  renderModeButtons();
+  updateModeDesc();
+  updateListSectionTitle();
+  renderList();
+  updateListToggleBtn();
+});
+
+// ========== 名单按钮事件 ==========
 blToggleBtn.addEventListener("click", () => {
   if (!currentHostname) return;
-  if (isCurrentSiteBlacklisted()) {
-    blacklist = blacklist.filter((h) => h !== currentHostname);
+  if (isCurrentSiteInList()) {
+    // 移出名单
+    if (currentSettings.mode === "blacklist") {
+      blacklist = blacklist.filter((h) => h !== currentHostname);
+    } else {
+      whitelist = whitelist.filter((h) => h !== currentHostname);
+    }
   } else {
-    blacklist.push(currentHostname);
+    // 加入名单
+    if (currentSettings.mode === "blacklist") {
+      blacklist.push(currentHostname);
+    } else {
+      whitelist.push(currentHostname);
+    }
   }
-  saveBlacklist();
-  renderBlacklist();
-  updateBlToggleBtn();
-  // 不再发 applySettings，让 content.js 通过 storage 监听自动响应
+  saveList(currentSettings.mode);
+  renderList();
+  updateListToggleBtn();
 });
 
 // ========== 启动 ==========
-// 先通过 content script 获取当前网站 hostname，再加载设置和黑名单
 getCurrentHostname((hostname) => {
   currentHostname = hostname;
   currentSiteEl.textContent = currentHostname
@@ -222,8 +320,8 @@ getCurrentHostname((hostname) => {
     : "当前页面不支持（如 chrome:// 内部页面）";
 
   loadSettings();
-  loadBlacklist(() => {
-    renderBlacklist();
-    updateBlToggleBtn();
+  loadLists(() => {
+    renderList();
+    updateListToggleBtn();
   });
 });

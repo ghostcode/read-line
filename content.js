@@ -1,7 +1,7 @@
 /**
  * Read-Line — 网页阅读辅助线
  * 支持实线、虚线、波浪线三种类型
- * 支持网站黑名单
+ * 支持黑名单/白名单两种模式
  */
 
 const DEFAULT_SETTINGS = {
@@ -9,10 +9,12 @@ const DEFAULT_SETTINGS = {
   color: "#44bd32",
   thickness: 2,
   lineType: "solid",   // "solid" | "dashed" | "wavy"
+  mode: "blacklist",   // "blacklist"（默认显示，名单内不显示）| "whitelist"（默认不显示，名单内显示）
 };
 
 let settings = { ...DEFAULT_SETTINGS };
 let blacklist = [];
+let whitelist = [];
 let svgEl = null;   // 外层 SVG（固定定位，覆盖视口）
 let gEl = null;      // 内层 <g>，由 transform 控制 Y 偏移
 let lineEl = null;   // <line> 元素（solid / dashed 共用）
@@ -29,8 +31,21 @@ function getHostname() {
   try { return new URL(location.href).hostname; } catch { return ""; }
 }
 
-// ========== 检查当前网站是否在黑名单 ==========
-function isBlacklisted() {
+// ========== 判断当前网站是否应该显示阅读线 ==========
+function shouldShowLine() {
+  if (!settings.enabled) return false;
+  if (settings.mode === "whitelist") {
+    return whitelist.includes(currentHostname);
+  }
+  // blacklist 模式：默认显示，黑名单内不显示
+  return !blacklist.includes(currentHostname);
+}
+
+// ========== 判断当前网站是否被名单过滤（不考虑 enabled）==========
+function isCurrentSiteFiltered() {
+  if (settings.mode === "whitelist") {
+    return !whitelist.includes(currentHostname);
+  }
   return blacklist.includes(currentHostname);
 }
 
@@ -46,11 +61,12 @@ function loadSettings(callback) {
   }
 }
 
-// ========== 加载黑名单 ==========
-function loadBlacklist(callback) {
+// ========== 加载名单 ==========
+function loadLists(callback) {
   if (typeof chrome !== "undefined" && chrome.storage) {
-    chrome.storage.sync.get({ blacklist: [] }, (items) => {
+    chrome.storage.sync.get({ blacklist: [], whitelist: [] }, (items) => {
       blacklist = items.blacklist;
+      whitelist = items.whitelist;
       if (callback) callback();
     });
   } else {
@@ -114,8 +130,7 @@ function createLine() {
 function applyLineStyles() {
   if (!lineEl || !pathEl || !svgEl) return;
 
-  const blacklisted = isBlacklisted();
-  svgEl.style.display = (settings.enabled && !blacklisted) ? "" : "none";
+  svgEl.style.display = shouldShowLine() ? "" : "none";
 
   if (settings.lineType === "solid" || settings.lineType === "dashed") {
     lineEl.style.display = "";
@@ -144,7 +159,7 @@ function updateLinePosition() {
 }
 
 function scheduleUpdate() {
-  if (!settings.enabled || isBlacklisted() || rafId) return;
+  if (!shouldShowLine() || rafId) return;
   rafId = requestAnimationFrame(updateLinePosition);
 }
 
@@ -160,7 +175,7 @@ function init() {
   currentHostname = getHostname();
 
   loadSettings(() => {
-    loadBlacklist(() => {
+    loadLists(() => {
       createLine();
 
       document.addEventListener("mousemove", (e) => {
@@ -173,7 +188,7 @@ function init() {
     });
   });
 
-  // 监听 storage 变化：黑名单或设置变更时实时响应
+  // 监听 storage 变化：名单或设置变更时实时响应
   if (typeof chrome !== "undefined" && chrome.storage) {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== "sync") return;
@@ -181,13 +196,22 @@ function init() {
       if (changes.blacklist) {
         blacklist = changes.blacklist.newValue || [];
         applyLineStyles();
-        if (settings.enabled && !isBlacklisted()) scheduleUpdate();
+        if (shouldShowLine()) scheduleUpdate();
       }
-
+      if (changes.whitelist) {
+        whitelist = changes.whitelist.newValue || [];
+        applyLineStyles();
+        if (shouldShowLine()) scheduleUpdate();
+      }
+      if (changes.mode) {
+        settings.mode = changes.mode.newValue;
+        applyLineStyles();
+        if (shouldShowLine()) scheduleUpdate();
+      }
       if (changes.enabled) {
         settings.enabled = changes.enabled.newValue;
         applyLineStyles();
-        if (settings.enabled && !isBlacklisted()) scheduleUpdate();
+        if (shouldShowLine()) scheduleUpdate();
       }
       if (changes.color) {
         settings.color = changes.color.newValue;
@@ -217,13 +241,14 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       settings.color = message.color ?? settings.color;
       settings.thickness = message.thickness ?? settings.thickness;
       settings.lineType = message.lineType ?? settings.lineType;
+      settings.mode = message.mode ?? settings.mode;
       saveSettings();
       if (svgEl) {
         applyLineStyles();
         if (settings.lineType === "wavy") {
           pathEl.setAttribute("d", makeWavyPath());
         }
-        if (settings.enabled && !isBlacklisted()) scheduleUpdate();
+        if (shouldShowLine()) scheduleUpdate();
       }
       sendResponse({ ...settings });
       return true;
@@ -244,7 +269,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       saveSettings();
       if (svgEl) {
         applyLineStyles();
-        if (settings.enabled && !isBlacklisted()) scheduleUpdate();
+        if (shouldShowLine()) scheduleUpdate();
       }
       sendResponse({ enabled: settings.enabled });
       return true;
@@ -256,8 +281,8 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
 document.addEventListener("keydown", (e) => {
   if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "l") {
     e.preventDefault();
-    // 黑名单网站禁止快捷键切换
-    if (isBlacklisted()) return;
+    // 被名单过滤的网站禁止快捷键切换
+    if (isCurrentSiteFiltered()) return;
     settings.enabled = !settings.enabled;
     saveSettings();
     if (svgEl) {
